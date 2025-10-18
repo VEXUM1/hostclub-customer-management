@@ -3,58 +3,86 @@ const fs = require('fs');
 const path = require('path');
 
 // データベースファイルのパス
-const dbPath = path.join(__dirname, '..', 'customers.db');
+// Renderでは /tmp ディレクトリのみ書き込み可能
+const dbPath = process.env.NODE_ENV === 'production'
+    ? '/tmp/customers.db'
+    : path.join(__dirname, '..', 'customers.db');
 
 let db = null;
 let SQL = null;
 
 // データベースの初期化
 async function initDatabase() {
-    SQL = await initSqlJs();
+    try {
+        SQL = await initSqlJs();
 
-    // 既存のデータベースファイルがあれば読み込む
-    if (fs.existsSync(dbPath)) {
-        const buffer = fs.readFileSync(dbPath);
-        db = new SQL.Database(buffer);
-    } else {
-        db = new SQL.Database();
+        // 既存のデータベースファイルがあれば読み込む
+        if (fs.existsSync(dbPath)) {
+            console.log('Loading existing database from:', dbPath);
+            const buffer = fs.readFileSync(dbPath);
+            db = new SQL.Database(buffer);
+        } else {
+            console.log('Creating new database at:', dbPath);
+            db = new SQL.Database();
+        }
+
+        // テーブル作成
+        db.run(`
+            CREATE TABLE IF NOT EXISTS customers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                id_number INTEGER,
+                data TEXT NOT NULL,
+                ai_insights TEXT,
+                registered_at TEXT NOT NULL,
+                updated_at TEXT,
+                created_timestamp INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
+            )
+        `);
+
+        db.run(`
+            CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        `);
+
+        // データベースをファイルに保存
+        saveDatabase();
+
+        console.log('Database initialized successfully');
+        console.log('Environment:', process.env.NODE_ENV || 'development');
+        console.log('Database path:', dbPath);
+    } catch (error) {
+        console.error('Failed to initialize database:', error);
+        throw error;
     }
-
-    // テーブル作成
-    db.run(`
-        CREATE TABLE IF NOT EXISTS customers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            id_number INTEGER,
-            data TEXT NOT NULL,
-            ai_insights TEXT,
-            registered_at TEXT NOT NULL,
-            updated_at TEXT,
-            created_timestamp INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-        )
-    `);
-
-    db.run(`
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key TEXT UNIQUE NOT NULL,
-            value TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    `);
-
-    // データベースをファイルに保存
-    saveDatabase();
-
-    console.log('Database initialized successfully');
 }
 
 // データベースをファイルに保存
 function saveDatabase() {
     if (db) {
-        const data = db.export();
-        const buffer = Buffer.from(data);
-        fs.writeFileSync(dbPath, buffer);
+        try {
+            const data = db.export();
+            const buffer = Buffer.from(data);
+
+            // ディレクトリが存在しない場合は作成
+            const dir = path.dirname(dbPath);
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+
+            fs.writeFileSync(dbPath, buffer);
+            console.log('Database saved successfully to:', dbPath);
+        } catch (error) {
+            console.error('Failed to save database:', error);
+            // 本番環境ではエラーを無視（メモリ上で動作）
+            if (process.env.NODE_ENV !== 'production') {
+                throw error;
+            }
+        }
     }
 }
 
